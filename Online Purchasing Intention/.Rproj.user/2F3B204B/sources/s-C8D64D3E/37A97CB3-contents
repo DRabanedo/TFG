@@ -1,0 +1,52 @@
+par_comp = rep(NA,37)
+eficiencia = rep(NA,37)
+nodos = rep(NA,37)
+
+tabla_comparacion = data.frame(Parametro_complejidad = par_comp, Eficiencia = eficiencia, Nodos = nodos)
+cp_todos_v = tcar_total$cptable[,1]
+nodos_todos_v = tcar_total$cptable[,2]
+
+for (j in 1:37 ){
+  
+  fold = 10
+  n = 12330
+  n_test = n/fold
+  n_tr = n - n_test 
+  vn = 1:n
+  min_nod <- 1
+  min_cp <- 0
+  cv <- 10
+  v_tabla = matrix(rep(NA,fold*4), nrow = fold)
+  cp_todos = cp_todos_v[j]
+  
+  for (i in 1:fold ) {
+    i_test = 1:n_test + (i - 1)*n_test
+    i_tr = vn[-i_test]
+    datos_tr = datos[i_tr,]
+    datos_test = datos[i_test,]
+    tcar_todos <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                         + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                         + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                         + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                         + Weekend, data=datos_tr, method = 'class',
+                         control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+    tcar_pruned = prune(tcar_todos, cp_todos)
+    tcar_pruned_table = table(predict(tcar_pruned, datos_test, t="class",), datos_test$y)
+    v_tabla[i,] = matrix(tcar_pruned_table, nrow = 1)
+  }
+  v_suma = apply(v_tabla,2,sum)
+  aciertos_cv = sum(v_suma[c(1,4)])
+  fallos_cv = sum(v_suma[c(2,3)])
+  p_aciertos_cv = (aciertos_cv/12330)*100
+  
+  tabla_comparacion$Parametro_complejidad[j] = cp_todos
+  tabla_comparacion$Eficiencia[j] = p_aciertos_cv
+  tabla_comparacion$Nodos[j] = nodos_todos_v[j]
+  
+  
+  
+}
+tabla_comparacion
+
+
+

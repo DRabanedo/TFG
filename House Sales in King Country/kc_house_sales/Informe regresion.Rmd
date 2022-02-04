@@ -1,0 +1,408 @@
+---
+title: "Segunda Parte: Informe árboles de regresión"
+author: "David Rabanedo"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: lumen
+    df_print: kable
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Análisis y composición de los datos a utilizar
+
+```{r cars}
+datos <- read.table('kc_house_data.csv', header = TRUE, sep =',')
+library(rpart)
+library(rpart.plot)
+library(ranger)
+library(ggplot2)
+set.seed(732)
+```
+
+Vamos en primer lugar a hacer un análisis general de los datos:
+
+- id: Unique ID for each home sold
+- date: Date of the home sale
+- price: Price of each home sold
+- bedrooms: Number of bedrooms
+- bathrooms: Number of bathrooms, where .5 accounts for a room with a toilet but no shower
+- sqft_living: Square footage of the apartments interior living space
+- sqft_lot: Square footage of the land space
+- floors: Number of floors
+- waterfront: A dummy variable for whether the apartment was overlooking the waterfront or not
+- view: An index from 0 to 4 of how good the view of the property was
+- condition: An index from 1 to 5 on the condition of the apartment,
+- grade: An index from 1 to 13, where 1-3 falls short of building construction and design, 7 has an average level of construction and design, and 11-13 have a high quality level of construction and design.
+- sqft_above: The square footage of the interior housing space that is above ground level
+- sqft_basement: The square footage of the interior housing space that is below ground level
+- yr_built: The year the house was initially built
+- yr_renovated: The year of the house’s last renovation
+- zipcode: What zipcode area the house is in
+- lat: Lattitude
+- long: Longitude
+- sqft_living15: The square footage of interior housing living space for the nearest 15 neighbors
+- sqft_lot15: The square footage of the land lots of the nearest 15 neighbors
+
+```{r}
+#Preparamos los datos para hacer la regresión, aplicamos el logaritmo para eliminar la asimetría y obtener una variable próxima a la normal
+#Extraer fecha si me veo con fuerza
+datos_sel = datos[c(3,4,5,6,7,8,9,10,11,12,13,14,15,17,20,21)]
+
+datos_sel$log_price = log(datos$price) #Hacer el estudio de las dos
+
+## Convertimos en factor las variables que lo son, las cualitativas:
+datos_sel$waterfront = factor(datos_sel$waterfront)
+datos_sel$condition = factor(datos_sel$condition)
+datos_sel$view = factor(datos_sel$view)
+datos_sel$grade = factor(datos_sel$grade)
+datos_sel$zipcode = factor(datos_sel$zipcode)
+```
+
+Como en este caso, tenemos dos casas cuya extensión es terriblemente grande, destacando sobre las demás, vamos a eliminarlas de cara a que o afecten tanto a la regresión que vamos a realizar a continuación.
+
+```{r}
+aux = datos_sel$sqft_living > 10000
+datos_sel = datos_sel[!aux,] 
+```
+
+## Árbol de regresión total: en busca del mejor parámetro
+
+Realizamos el árbol de regresión, en primer lugar, vamos a hacer el árbol crecido totalmente de cara a poder elegir el mejor parámetro de complejidad posible. Para ello utilizaremos el método que minimiza el x-error y el método 1SE, de cara a compararlos de nuevo.
+
+```{r}
+datos_reg <- rpart(log_price ~ bathrooms + sqft_living + sqft_lot + floors +
+                     waterfront + view + condition + grade + sqft_above +
+                     sqft_basement + yr_built + zipcode +  sqft_living15 +
+                     sqft_lot15, data=datos_sel, cp = 0)
+``` 
+
+Aquí tenemos toda la información, pero lo que a nosotros nos interesa es elegir el mejor parámetro de complejidad (*cp*) para realizar la poda a nuestro árbol. Vamos a ver cuales son los optimos mostrándolos en una tabla. La tabla es demasiado extensa, por lo que vamos a omitir su presentación, pero la usaremos para extraer los valores.
+
+```{r, eval=FALSE}
+datos_reg$cptable 
+```
+
+### Método 1SE para obtener el mejor árbol posible
+
+Podemos mirarlo directamente, viendo primero:
+
+$$ xerror_k = \min{xerror}$$
+Donde $$xstd_k$$ es el error estándar asociado a ese xerror minímo, en la posición k de la tabla.
+Queremos entonces encontrar el primer cp que cumple:
+$$  xerror_{cp} < xerror_k + xstd_k $$
+De esta forma encontramos el cp óptimo por el método 1SE.
+
+```{r}
+one_se = datos_reg$cptable[which.min(datos_reg$cptable [,4]),4] + datos_reg$cptable[which.min(datos_reg$cptable [,4]),5]
+a = datos_reg$cptable[,4] > one_se
+cp_optimo_pos = min(which(a == FALSE))
+cp_se = sqrt(datos_reg$cptable[cp_optimo_pos,"CP"]*datos_reg$cptable[cp_optimo_pos-1,"CP"])
+cp_se
+```
+
+También podemos aplicar el siguiente comando, que nos muestra la mejor decisión utilizando el método 1SE. Esta decisión se corresponde al primer valor (el que esté mas a la izquierda debajo de la linea horizontal), pero no se aprecia nada.
+
+```{r}
+plotcp(datos_reg)
+```
+#### **Mejor árbol por el método 1SE**
+```{r}
+datos_reg_se <- rpart(log_price ~ bathrooms + sqft_living + sqft_lot + floors +
+                     waterfront + view + condition + grade + sqft_above +
+                     sqft_basement + yr_built + zipcode +  sqft_living15 +
+                     sqft_lot15, data=datos_sel, cp = cp_se)
+``` 
+
+### Método minimización del x-error para obtener el mejor árbol posible
+
+Este es más facil de calcular ya que sólo necesitamos hallar el mínimo de la cp_table, pero en este caso seguramente sea tan grande que no nos va a ser útil de cara al calculo, ya que el anterior ya era bastante grande.
+
+```{r}
+cp_xe = datos_reg$cptable[which.min(datos_reg$cptable[,4]),1]
+cp_xe
+```
+
+
+#### **Mejor árbol por el método de minimización del x-error**
+
+```{r}
+datos_reg_xe <- rpart(log_price ~ bathrooms + sqft_living + sqft_lot + floors +
+                     waterfront + view + condition + grade + sqft_above +
+                     sqft_basement + yr_built + zipcode +  sqft_living15 +
+                     sqft_lot15, data=datos_sel, cp = cp_xe)
+``` 
+
+### Cross-Validation
+
+Para poder calcular el error que cometen estos árboles en la regresión, aplicamos el método de cross-validation, que hay que adaptar los árboles de regresión de cara a hallar bien el error que nos piden
+
+```{r}
+## Primero elegimos el número de capas de cross-validation
+fold = 10
+## Observaciones
+n = 21610
+## Tamanño de la muestra test
+n_test = n/fold
+## Tamaño de la muestra trainning
+n_tr = n - n_test 
+vn = 1:n
+``` 
+
+Ya tenemos todos los datos, vamos ahora a realizar el método de cross-validation para ver que número de observaciones clasifica bien y ver así la eficiencia del árbol que hemos generado.
+
+### Cross-Validation error de la 1SE
+
+Primero lo hacemos con log(price):
+```{r}
+#Solo hay que cambiar para hacer la mean - valor calculado.
+cv_error = 0
+for (i in 1:fold ) {
+  i_test = 1:n_test + (i - 1)*n_test
+  i_tr = vn[-i_test]
+  datos_tr = datos_sel[i_tr,]
+  datos_test = datos_sel[i_test,]
+  tcar_pruned_eficacia  <- rpart(log_price ~ bathrooms + sqft_living +
+                           sqft_lot + floors + sqft_above + sqft_basement + yr_built
+                         + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15, data=datos_sel ,control =
+                           rpart.control(xval = 10, minbucket = 1, cp = cp_se ))
+  tcar_pruned_pred = predict(tcar_pruned_eficacia, datos_test, type = "vector")
+  tcar_pruned_ver =  datos_test$log_price
+  for (k in 1:length( tcar_pruned_eficacia)) {
+    cv_error = cv_error + (tcar_pruned_pred[k] - tcar_pruned_ver[k])^2
+  }
+}
+cv_error/n
+``` 
+
+
+Ahora lo hacemos con price:
+```{r}
+#Solo hay que cambiar para hacer la mean - valor calculado.
+cv_error = 0
+for (i in 1:fold ) {
+  i_test = 1:n_test + (i - 1)*n_test
+  i_tr = vn[-i_test]
+  datos_tr = datos_sel[i_tr,]
+  datos_test = datos_sel[i_test,]
+  tcar_pruned_eficacia  <- rpart(price ~ bathrooms + sqft_living +
+                           sqft_lot + floors + sqft_above + sqft_basement + yr_built
+                         + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15, data=datos_sel ,control =
+                           rpart.control(xval = 10, minbucket = 1, cp = cp_se ))
+  tcar_pruned_pred = predict(tcar_pruned_eficacia, datos_test, type = "vector")
+  tcar_pruned_ver =  datos_test$log_price
+  for (k in 1:length( tcar_pruned_eficacia)) {
+    cv_error = cv_error + (tcar_pruned_pred[k] - tcar_pruned_ver[k])^2
+  }
+}
+cv_error/n
+``` 
+
+### Cross-Validation error de la minimización del x-error
+
+## Random forest de regresión
+
+```{r , warning=FALSE, message=FALSE}
+n_trees_rf = 1000 #Numero de árboles a utilizar
+min_nod_size_rf = 1 #Queremos un fullgrown tree, para reducir el sesgo
+r_forest = ranger(
+    formula = log_price ~ bathrooms + sqft_living +sqft_lot + floors + sqft_above + sqft_basement +yr_built + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15,
+    data = datos_sel, #Conjunto de datos
+    num.trees = n_trees_rf,
+    mtry = NULL, #Number of variables to possibly split at in each node, Default
+    #is the (rounded down) square root of the number variables. 
+    importance = "impurity_corrected",
+    write.forest = TRUE, #Si guarda el árbol para después predecir con ese árbol
+    probability = FALSE,
+    min.node.size = min_nod_size_rf, #Queremos un fullgrown tree, para reducir el sesgo
+    max.depth = NULL, #NULL nos da crecimiento ilimitado
+    replace = TRUE, #La muestra la hace con remplazamiento
+    case.weights = NULL, #Para oversamplear ciertos valores
+    class.weights = NULL, #Pesos para el outcome
+    splitrule = "variance",
+    split.select.weights = NULL,
+    always.split.variables = NULL, #Para meter esas variables siempre en el
+    #split a mayores de las que están en mtry
+    regularization.factor = 1,
+    keep.inbag = FALSE,
+    inbag = NULL, #Manually set observations per tree. List of size num.trees, 
+    #containing inbag counts for each observation. Can be used for stratified sampling.
+    oob.error = TRUE,
+    num.threads = NULL,
+    save.memory = FALSE, #Memory saving split mode
+    verbose = TRUE, #	Show computation status and estimated runtime
+    seed = 732,
+    dependent.variable.name = NULL) #Name of dependent variable, needed if no formula given)
+```
+
+Habiendo hecho esto, sólo nos queda saber cómo de bien funciona. Podríamos haber hecho una training sample y una test sample, pero dado que el propio algoritmo nos proporciona el error cometido sobre las Out-Of-The-Bag Observations, vamos a aprovecharlo y ver como clasifica nuestro random forest nuestro propio conjunto (No hay información privilegiada, luego es legítimo)
+
+
+```{r}
+r_forest$prediction.error #nos da la mean squared error
+r_forest$r.squared #nos da R-squared
+```
+
+#### **Cálculo con el logaritmo del precio**
+```{r}
+
+n_trees_rf_bucle = c(500,1000,1500,2000,3000) #Numero de árboles a utilizar
+mtry_rf_bucle = c(round(0.5*sqrt(14)), round(sqrt(14)), round(2*sqrt(14)))
+min_nod_size_rf = 1 #Queremos un fullgrown tree, para reducir el sesgo
+tabla_comparacion = data.frame(Splits_por_nodo = rep(NA, length(n_trees_rf_bucle)*length(mtry_rf_bucle)), Numero_arboles = rep(NA,length(n_trees_rf_bucle)*length(mtry_rf_bucle)),
+                               Mean_squared = rep(NA,length(n_trees_rf_bucle)*length(mtry_rf_bucle)))
+rf_tabla = matrix(rep(NA,length(n_trees_rf_bucle)*length(mtry_rf_bucle)), nrow = length(n_trees_rf_bucle))
+k = 0
+for (i in 1:length(n_trees_rf_bucle)) {
+  for (j in 1:length(mtry_rf_bucle)) {
+    n_trees_int = n_trees_rf_bucle[i]
+    mtry_int = mtry_rf_bucle[j]
+    r_forest_buc = ranger(
+      formula = log_price ~ bathrooms + sqft_living +sqft_lot + floors + sqft_above + sqft_basement +yr_built + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15,
+      data           = datos_sel,
+      num.trees      = n_trees_int,
+      importance     = "impurity_corrected",
+      mtry           = mtry_int ,
+      seed           = 732,
+      splitrule      = "variance")
+    rf_tabla[i,j] = r_forest_buc$prediction.error
+    k = k + 1
+    tabla_comparacion$Mean_squared[k] = r_forest_buc$prediction.error
+    tabla_comparacion$Splits_por_nodo[k] = mtry_rf_bucle[j]
+    tabla_comparacion$Numero_arboles[k]  = n_trees_rf_bucle[i]
+    
+  }
+}    
+
+tabla_comparacion$Mean_squared = as.factor(tabla_comparacion$Mean_squared)
+tabla_comparacion
+```
+
+Tenemos que el valor que minimiza el error, es aquel que maximiza los aciertos, en este caso:
+ 
+```{r ,echo = FALSE}
+Valor_optimo = rf_tabla[which.max(rf_tabla)]
+paste0("El acierto en las muestras haciendo random forest con los parámetros variados es del ", Valor_optimo)
+
+```
+Para una mejor interpretación vamos a hacer una gráfica con los diferentes datos:
+ 
+```{r}
+v2_rf = rf_tabla[,1]
+v4_rf = rf_tabla[,2]
+v7_rf = rf_tabla[,3]
+datos_grafica =  data.frame( "Sub" = v2_rf,
+                             "Acc" = v4_rf,
+                             "Sup" = v7_rf,
+                             "Numero_de_arboles" = n_trees_rf_bucle)
+ggplot(datos_grafica) +
+  geom_line(aes(x = Numero_de_arboles, y = Sub, col = "2 var por split")) + 
+  geom_line(aes(x = Numero_de_arboles, y = Acc, col = "4 var por split")) +
+  geom_line(aes(x = Numero_de_arboles, y = Sup, col = "7 var por split")) +
+  scale_color_discrete("Número de variables por Split") +
+  labs(title='SquaredMean, con logaritmo del precio, en función del número de árboles, según el split',
+       x='Número de árboles',
+       y='MSE') 
+
+```
+
+#### **Cálculo con price, sin el logaritmo**
+```{r, eval=FALSE,eval = FALSE}
+
+n_trees_rf_bucle2 = c(500,1000,1500,2000,3000) #Numero de árboles a utilizar
+mtry_rf_bucle2 = c(round(0.5*sqrt(14)), round(sqrt(14)), round(2*sqrt(14)))
+min_nod_size_rf2 = 1 #Queremos un fullgrown tree, para reducir el sesgo
+tabla_comparacion2 = data.frame(Splits_por_nodo = rep(NA, length(n_trees_rf_bucle2)*length(mtry_rf_bucle2)), Numero_arboles = rep(NA,length(n_trees_rf_bucle2)*length(mtry_rf_bucle2)),
+                               Mean_squared = rep(NA,length(n_trees_rf_bucle2)*length(mtry_rf_bucle2)))
+rf_tabla2 = matrix(rep(NA,length(n_trees_rf_bucle2)*length(mtry_rf_bucle2)), nrow = length(n_trees_rf_bucle2))
+k = 0
+for (i in 1:length(n_trees_rf_bucle2)) {
+  for (j in 1:length(mtry_rf_bucle2)) {
+    n_trees_int2 = n_trees_rf_bucle2[i]
+    mtry_int2 = mtry_rf_bucle2[j]
+    r_forest_buc2 = ranger(
+      formula = price ~ bathrooms + sqft_living +sqft_lot + floors + sqft_above + sqft_basement +yr_built + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15,
+      data           = datos_sel,
+      num.trees      = n_trees_int2,
+      importance     = "impurity_corrected",
+      mtry           = mtry_int2 ,
+      seed           = 732,
+      splitrule      = "variance")
+    rf_tabla2[i,j] = r_forest_buc2$prediction.error
+    k = k + 1
+    tabla_comparacion2$Mean_squared[k] = r_forest_buc2$prediction.error
+    tabla_comparacion2$Splits_por_nodo[k] = mtry_rf_bucle2[j]
+    tabla_comparacion2$Numero_arboles[k]  = n_trees_rf_bucle2[i]
+    
+  }
+}    
+
+tabla_comparacion2$Mean_squared = as.factor(tabla_comparacion2$Mean_squared)
+tabla_comparacion2
+```
+
+
+Tenemos que el valor que minimiza el error, es aquel que maximiza los aciertos, en este caso:
+```{r ,echo = FALSE, eval = FALSE}
+Valor_optimo2 = rf_tabla2[which.max(rf_tabla2)]
+paste0("El acierto en las muestras haciendo random forest con los parámetros variados es del ", Valor_optimo2)
+
+```
+
+Para una mejor interpretación vamos a hacer una gráfica con los diferentes datos:
+ 
+```{r, eval = FALSE}
+v2_rf2 = rf_tabla2[,1]
+v4_rf2 = rf_tabla2[,2]
+v7_rf2 = rf_tabla2[,3]
+datos_grafica2 =  data.frame( "Sub" = v2_rf2,
+                             "Acc" = v4_rf2,
+                             "Sup" = v7_rf2,
+                             "Numero_de_arboles" = n_trees_rf_bucle)
+ggplot(datos_grafica2) +
+  geom_line(aes(x = Numero_de_arboles, y = Sub, col = "2 var por split")) + 
+  geom_line(aes(x = Numero_de_arboles, y = Acc, col = "4 var por split")) +
+  geom_line(aes(x = Numero_de_arboles, y = Sup, col = "7 var por split")) +
+  scale_color_discrete("Número de variables por Split") +
+  labs(title='SquaredMean, con el precio, en función del número de árboles, según el split',
+       x='Número de árboles',
+       y='MSE') 
+
+```
+
+## Comparación: modelo de regresión
+
+Dado que no tenemos una referencia, vamos a utilizar el modelo de regresión múltiple de cara a poder comparar los resultados obtenidos con el random forest y ver cómo de realmente buenos son las posibles ventajas de este método.
+
+Primero con logaritmo:
+```{r}
+mult_reg_log = lm(log_price ~ bathrooms + sqft_living +sqft_lot + floors + sqft_above
+              + yr_built + sqft_living15 + sqft_lot15, data=datos_sel)
+sum((mult_reg_log$residuals)^2)
+```
+
+Random forest con logaritmo:
+```{r ,echo = FALSE}
+Valor_optimo = rf_tabla[which.max(rf_tabla)]
+paste0("El acierto en las muestras haciendo random forest con los parámetros variados es del ", Valor_optimo)
+
+```
+
+Ahora sin el logaritmo:
+```{r}
+mult_reg_nolog = lm(price ~ bathrooms + sqft_living +sqft_lot + floors + sqft_above
+              + yr_built + sqft_living15 + sqft_lot15, data=datos_sel)
+sum((mult_reg_nolog$residuals)^2)
+```
+
+Random forest sin el logaritmo:
+```{r ,echo = FALSE, eval = FALSE}
+Valor_optimo2 = rf_tabla2[which.max(rf_tabla)]
+paste0("El acierto en las muestras haciendo random forest con los parámetros variados es del ", Valor_optimo2)
+
+```

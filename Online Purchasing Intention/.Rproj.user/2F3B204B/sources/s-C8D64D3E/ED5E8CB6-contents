@@ -1,0 +1,126 @@
+library(rpart)
+library(rpart.plot)
+set.seed(457)
+setwd("C:/Users/David Rabanedo/Desktop/Universidad/Programa R/TFG/Datos/Online Purchasing Intention")
+datos <- read.table('online_shoppers_intention.csv', header = TRUE, sep =',')
+compra <- factor(datos$Revenue , levels = c(FALSE,TRUE), labels = c("NO", "SI"))
+datos$y <- compra
+datos$y
+datos$OperatingSystems = factor(datos$OperatingSystems)
+datos$Browser = factor(datos$Browser)
+datos$Region = factor(datos$Region)
+datos$TrafficType = factor(datos$TrafficType)
+datos$VisitorType = factor(datos$VisitorType)
+datos$Weekend = factor(datos$Weekend) 
+datos$Month = factor(datos$Month, labels = c('Aug', 'Dec', 'Feb', 'Jul', 'June', 'Mar', 'May', 'Nov', 'Oct', 'Sep'))
+datos$Revenue = factor(datos$Revenue)
+#Árbol Default 
+#(xval = 10, cp = 0.01, split formula = GINI, minsplit = 20, 
+#minbucket = round(minsplit/3), maxcompete = 4, maxsurrogate = 5, 
+#usesurrogate = 2,surrogatestyle = 0, #maxdepth = 30)
+colnames(datos)
+
+tcar <- rpart( compra ~ Administrative + Administrative_Duration + Informational
+               + Informational_Duration +  ProductRelated + ProductRelated_Duration
+               + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+               + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+               + Weekend  , data=datos, method = 'class')
+rpart.plot(tcar)
+
+
+#Árbol total para podar
+min_nod <- 1
+min_cp <- 0
+cv <- 10
+tcar_total <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                     + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                     + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                     + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                     + Weekend, data=datos, method = 'class',
+                     control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+plotcp(tcar_total)
+tcar_total$cptable
+tcar_pruned = prune(tcar_total, cp = tcar_total$cptable[which.min(tcar_total$cptable[,"xerror"]),"CP"])
+rpart.plot(tcar_pruned, main = "Best pruned Tree", box.palette = c("red","green"))
+
+cp_nooptimo_v = tcar_total$cptable[,3] 
+length(cp_nooptimo_v)
+cp_nooptimo_v
+
+par_comp = rep(NA,37)
+eficiencia = rep(NA,37)
+nodos = rep(NA,37)
+
+tabla_comparacion = data.frame(Parametro_complejidad = par_comp, Eficiencia = eficiencia,
+                               Nodos = nodos)
+cp_nooptimo_v = tcar_total$cptable[,1]
+cp_nooptimo_v
+nodos_nooptimo_v = tcar_total$cptable[,2]
+nodos_nooptimo_v
+
+for (j in 1:37 ){
+  
+  fold = 10
+  n = 12330
+  n_test = n/fold
+  n_tr = n - n_test 
+  vn = 1:n
+  min_nod <- 1
+  min_cp <- 0
+  cv <- 10
+  v_tabla = matrix(rep(NA,fold*4), nrow = fold)
+  cp_nooptimo = cp_nooptimo_v[j]
+  
+  for (i in 1:fold ) {
+    print(i)
+    i_test = 1:n_test + (i - 1)*n_test
+    i_tr = vn[-i_test]
+    datos_tr = datos[i_tr,]
+    datos_test = datos[i_test,]
+    tcar_total <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                         + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                         + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                         + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                         + Weekend, data=datos_tr, method = 'class',
+                         control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+    tcar_pruned = prune(tcar_total, cp_nooptimo)
+    tcar_pruned_table = table(predict(tcar_pruned, datos_test, t="class",), datos_test$y)
+    v_tabla[i,] = matrix(tcar_pruned_table, nrow = 1)
+  }
+  v_suma = apply(v_tabla,2,sum)
+  aciertos_cv = sum(v_suma[c(1,4)])
+  fallos_cv = sum(v_suma[c(2,3)])
+  p_aciertos_cv = (aciertos_cv/12330)*100
+  
+  tabla_comparacion$Parametro_complejidad[j] = cp_nooptimo
+  tabla_comparacion$Eficiencia[j] = p_aciertos_cv
+  tabla_comparacion$Nodos[j] = nodos_nooptimo_v[j]
+  
+  print(j)
+  
+  
+}
+tabla_comparacion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

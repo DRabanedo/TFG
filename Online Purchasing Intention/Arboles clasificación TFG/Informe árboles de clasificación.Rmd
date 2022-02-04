@@ -1,0 +1,326 @@
+---
+title: "Informe árboles de clasificación"
+author: "David Rabanedo"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: lumen
+    df_print: kable
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Explicación de la base de datos:
+*Online Shoppers Intention*
+
+The dataset consists of feature vectors belonging to 12,330 sessions.
+The dataset was formed so that each session
+would belong to a different user in a 1-year period to avoid
+any tendency to a specific campaign, special day, user
+profile, or period.
+
+The dataset consists of 10 numerical and 8 categorical attributes.
+The **Revenue** attribute can be used as the class label.
+
+
++ **Administrative**, **Administrative Duration**, **Informational**, **Informational Duration**, **Product Related** and **Product Related Duration** represent the number of different types of pages visited by the visitor in that session and total time spent in each of these page categories. The values of these features are derived from the URL information of the pages visited by the user and updated in real time when a user takes an action, e.g. moving from one page to another.
++ The **Bounce Rate**, **Exit Rate** and **Page Value** features represent the metrics measured by "Google Analytics" for each page in the e-commerce site. 
++ The value of **Bounce Rate** feature for a web page refers to the percentage of visitors who enter the site from that page and then leave ("bounce") without triggering any other requests to the analytics server during that session.
++ The value of **Exit Rate** feature for a specific web page is calculated as for all 
+pageviews to the page, the percentage that were the last in the session. 
++ The **Page Value** feature represents the average value for a web page that a 
+user visited before completing an e-commerce transaction.
++ The **Special Day** feature indicates the closeness of the site visiting time to a specific special day (e.g. Mother’s Day, Valentine's Day) in which the sessions are more likely to be finalized with transaction. The value of this attribute is determined by 
+considering the dynamics of e-commerce such as the duration between the order
+date and delivery date. For example, for Valentina’s day, this value takes a 
+nonzero value between February 2 and February 12, zero before and after this 
+date unless it is close to another special day, and its maximum value of 1 on 
+February 8.
++ The dataset also includes operating system, browser, region, traffic
+type, visitor type as returning or new visitor, a Boolean value indicating 
+whether the date of the visit is weekend, and month of the year
+
+Para más información, ver el pdf Sakar2019, en esta misma carpeta.
+
+## Un primer acercamiento a los datos
+
+```{r}
+##Primero asignamos la variable datos a nuestra base de datos, para poder asi estudiarla
+library(rpart)
+library(rpart.plot)
+datos <- read.table('https://archive.ics.uci.edu/ml/machine-learning-databases/00468/online_shoppers_intention.csv', header = TRUE, sep =',')
+
+##Vamos a crear una nueva columna, asignando a los datos de la variable Revenue
+##el valor Si o No (si se produce la compra o no), si dicha variable vale TRUE ó 
+##FALSE, respectivamente. Además lo creamos de forma que los datos sean de tipo factor,
+##ya quevamos a elaborar un árbol de clasificación a partir del paquete rpart.
+compra <- factor(datos$Revenue , levels = c(FALSE,TRUE), labels = c("NO", "SI"))
+datos$y <- compra
+
+##Reasignamos los valores que son cualitativos a datos tipo factor
+datos$OperatingSystems = factor(datos$OperatingSystems)
+datos$Browser = factor(datos$Browser)
+datos$Region = factor(datos$Region)
+datos$TrafficType = factor(datos$TrafficType)
+datos$VisitorType = factor(datos$VisitorType)
+datos$Weekend = factor(datos$Weekend) 
+datos$Month = factor(datos$Month, labels = c('Aug', 'Dec', 'Feb', 'Jul', 'June', 'Mar', 'May', 'Nov', 'Oct', 'Sep'))
+datos$Revenue = factor(datos$Revenue)
+
+##Veamos como terminaron los 100 primeros casos
+datos$y[1:100]
+```
+
+## Árbol por defecto y su eficiencia sobre el conjunto
+Ahora que ya tenemos nuestros datos, vamos a elaborar los arboles y realizar un estudio para decidir cual de ellos es el mejor. Veamos un primer ejemplo, realizado con los parametros default del paquete rpart, que son:
+
+- **xval = 10** (conjuntos para hacer validación cruzada)  
+- **cp = 0.01** (parámetro de complejidad)  
+- **split formula = GINI** (fórmula para realizar los splits, puede ser *GINI* o *information*)  
+- **minsplit = 20** (mínimo de observaciones en un nodo para que se divida)
+- **minbucket = round(minsplit/3)** (mínimo de observaciones en un nodo terminal)  
+- **maxcompete = 4** (muestra las siguientes 4 variables que daban el mejor split)  
+- **maxsurrogate = 5** (el máximo número de variables surrogadas que mantiene en cada nodo. Recordar que las variables surrogadas son los siguientes mejores splits, y que estos se usan en caso de que haya información faltante)  
+- **usesurrogate = 2** (tipo de trato que se le da a la información faltante, en este caso (ver libro))  
+- **surrogatestyle = 0**  
+- **maxdepth = 30**;  
+
+```{r}
+tcar_default <- rpart( y ~ Administrative + Administrative_Duration + Informational
+               + Informational_Duration +  ProductRelated + ProductRelated_Duration
+               + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+               + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+               + Weekend  , data=datos, method = 'class')
+rpart.plot(tcar_default, main = "Default", box.palette = c("red","green"))
+
+```
+
+Veamos cuantas observaciones clasifica bien este arbol , el default, sobre el conjunto de datos con el que se ha construido (tiene información privilegiada):
+
+```{r}
+tcar_default_table = table(predict(tcar_default, t="class"), datos$y)
+tcar_default_table
+aciertos_tcar_default = tcar_default_table[1,1]+tcar_default_table[2,2]
+fallos_tcar_default = 12330 - aciertos_tcar_default
+aciertos_tcar_default
+fallos_tcar_default
+```
+
+Tenemos pues que este árbol clasifica de forma correcta el siguiente porcentaje de observaciones:
+```{r echo=FALSE}
+paste0("El acierto, con información privilegiada, es del ", (aciertos_tcar_default/12330)*100, "%")
+```
+
+
+## Contrucción del árbol total y eficiencia sobre el conjunto
+
+Vamos entonces a hacer el árbol más largo posible, garantizándonos así de que podemos elegir el mejor subárbol. 
+
+```{r}
+min_nod <- 1
+min_cp <- 0
+cv <- 10
+
+tcar_total <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                     + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                     + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                     + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                     + Weekend, data=datos, method = 'class',
+                     control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+```
+
+Vamos ahora a ver como se han repartido las observaciones y como es la estructura de nuestro árbol, de forma que podamos elegir los mejores parámetros para realizar el podado. Para un resumen exhaustivo, podemos ejecutar el siguiente comando:
+
+```{r eval=FALSE}
+summary(tcar_total)
+```
+
+Veamos cuantas observaciones clasifica bien este árbol, el arbol completo:
+```{r}
+tcar_total_table = table(predict(tcar_total, t="class"), datos$y)
+tcar_total_table
+aciertos_tcar_total = tcar_total_table[1,1]+tcar_total_table[2,2]
+fallos_tcar_total = 12330 - aciertos_tcar_total 
+aciertos_tcar_total
+fallos_tcar_total
+```
+Tenemos pues que este árbol clasifica de forma correcta el siguiente porcentaje de observaciones:
+```{r echo=FALSE}
+
+paste0("El acierto, con información privilegiada, es del ",(aciertos_tcar_total/12330)*100, "%")
+```
+
+
+
+## Elección del mejor pámetro de complejidad. Dos caminos.
+
+### Minimizar el *xerror*
+
+Aquí tenemos toda la información, pero lo que a nosotros nos interesa es elegir el mejor parámetro de complejidad (*cp*) para realizar la poda a nuestro árbol. Vamos a ver cuales son los optimos mostrándolos en una tabla.
+```{r}
+printcp(tcar_total)
+```
+ 
+ Vamos pues, en primer lugar, a buscar el árbol que tenga el menor error de validación cruzada, es decir, aquel que minimiza el parámetro *xerror* de la tabla.
+ 
+### Utilizando el método 1-SE
+
+Podemos mirarlo directamente, eligiendo el cp con posición más alta en la tabla que cumple que:
+$$  xerror(cp) < minxerror + xstd $$
+o aplicar el siguiente comando, que nos muestra la mejor decisión utilizando el método 1SE. Esta decisión se corresponde al primer valor (el que esté mas a la izquierda debajo de la linea horizontal)
+```{r}
+plotcp(tcar_total)
+```
+
+
+## Poda y obtención del árbol óptimo
+
+Vamos a podar el arbol en busca de que este árbol sea óptimo, utilizando en primer lugar el parámetro de complejidad que minimiza el xerror, que despúes compararemos con los demás ya que no tiene por qué ser el óptimo, ya que normalmente este corresponde al elegido mediante el método 1SE. Comencemos:
+
+```{r}
+#Vamos a utilizar los valores de la tabla para elegir dicho cp, ya que así somos
+#completamente exactos
+
+tcar_pruned_minxerror = prune(tcar_total, cp = tcar_total$cptable[which.min(tcar_total$cptable[,"xerror"]),"CP"])
+rpart.plot(tcar_pruned_minxerror, main = "Best pruned Tree", box.palette = c("red","green"))
+```
+
+Veamos cuantas observaciones clasifica bien este árbol, que es el que tiene mejor parámetro de complejidad según el método de validación cruzada:
+```{r}
+tcar_pruned_minxerror_table = table(predict(tcar_pruned_minxerror, t="class"), datos$y)
+tcar_pruned_minxerror_table
+aciertos_tcar_pruned_minxerror = tcar_pruned_minxerror_table[1,1]+tcar_pruned_minxerror_table[2,2]
+fallos_tcar_pruned_minxerror = 12330 - aciertos_tcar_pruned_minxerror
+aciertos_tcar_pruned_minxerror
+fallos_tcar_pruned_minxerror
+```
+
+Tenemos pues que este árbol clasifica de forma correcta el siguiente porcentaje de observaciones:
+```{r echo=FALSE}
+
+paste0("El acierto, con información privilegiada, es del ", (aciertos_tcar_pruned_minxerror/12330)*100, "%")
+```
+
+## Comprobación por validación cruzada
+
+### Árbol que minimiza el *xerror*
+
+Vamos a hacer validación cruzada con el mejor árbol, según el xerror, que hemos podado y con algún que otro más, cambiando el parámetro de complejidad por otro no óptimo con el fin de comparar el acierto:
+
+```{r}
+## Primero elegimos el número de capas de cross-validation
+fold = 10
+## Observaciones
+n = 12330
+## Tamanño de la muestra test
+n_test = n/fold
+## Tamaño de la muestra trainning
+n_tr = n - n_test 
+vn = 1:n
+## Hacemos una tabla para almacenar los datos
+v_tabla_optimo = matrix(rep(NA,fold*4), nrow = fold)
+## Volvemos a extraer el cp óptimo ya que lo utilizaremos para construir el árbol
+cp_optimo = sqrt(tcar_total$cptable[which.min(tcar_total$cptable[,"xerror"]),"CP"]*tcar_total$cptable[which.min(tcar_total$cptable[,"xerror"])+1,"CP"])
+cp_optimo
+```
+
+Ya tenemos todos los datos, vamos ahora a realizar el método de cross-validation para ver que número de observaciones clasifica bien y ver así la eficiencia del árbol que hemos generado.
+
+```{r}
+for (i in 1:fold ) {
+  i_test = 1:n_test + (i - 1)*n_test
+  i_tr = vn[-i_test]
+  datos_tr = datos[i_tr,]
+  datos_test = datos[i_test,]
+  tcar_eficacia <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                         + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                         + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                         + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                         + Weekend, data=datos_tr, method = 'class',
+                         control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+  tcar_pruned_eficacia = prune(tcar_eficacia, cp_optimo)
+  tcar_pruned_table = table(predict(tcar_pruned_eficacia, datos_test, t="class",), datos_test$y)
+  v_tabla_optimo[i,] = matrix(tcar_pruned_table, nrow = 1)
+  
+  
+}
+``` 
+
+Extraigamos ahora los datos, utilizando la tabla que habíamos generado.
+
+```{r}
+v_tabla_optimo
+v_suma_optimo = apply(v_tabla_optimo,2,sum)
+aciertos_cv_optimo = sum(v_suma_optimo[c(1,4)])
+aciertos_cv_optimo
+fallos_cv_optimo = sum(v_suma_optimo[c(2,3)])
+fallos_cv_optimo
+p_aciertos_cv_optimo = (aciertos_cv_optimo/12330)*100
+```
+
+Veamos pues cuantas observaciones ha clasificado bien nuestro árbol que minimiza el xerror.
+
+```{r echo=FALSE}
+paste0("El acierto en las muestras por cross-validation es del ", round(p_aciertos_cv_optimo,6), "%, con el parámetro de complejidad de ", round(cp_optimo, 6))
+```
+ 
+### Comparación de este árbol con los demás
+
+Veamos la eficiencia mediante el método de crossvalidation de cada uno de los parámetros que aparecen en la cptable del tcar_total. Veamos así si nuestra elección era la que más eficiencia tiene según este método:
+```{r}
+#Vamos a hacer la comparativa con todos los valores de la cptable, donde se supone que están 
+#los parámetros óptimos
+par_comp = rep(NA,37)
+eficiencia = rep(NA,37)
+nodos = rep(NA,37)
+
+tabla_comparacion = data.frame(Parametro_complejidad = par_comp, Eficiencia = eficiencia, Nodos = nodos)
+cp_todos_v = c(Inf,tcar_total$cptable[,1])
+nodos_todos_v = tcar_total$cptable[,2]
+cp_todos_v
+
+for (j in 1:37 ){
+  print(j)
+  fold = 10
+  n = 12330
+  n_test = n/fold
+  n_tr = n - n_test 
+  vn = 1:n
+  min_nod <- 1
+  min_cp <- 0
+  cv <- 10
+  v_tabla = matrix(rep(NA,fold*4), nrow = fold)
+  cp_todos = sqrt(cp_todos_v[j]*cp_todos_v[j+1])
+  
+  for (i in 1:fold ) {
+    i_test = 1:n_test + (i - 1)*n_test
+    i_tr = vn[-i_test]
+    datos_tr = datos[i_tr,]
+    datos_test = datos[i_test,]
+    tcar_todos <- rpart( y ~ Administrative + Administrative_Duration + Informational
+                         + Informational_Duration +  ProductRelated + ProductRelated_Duration
+                         + BounceRates + ExitRates + PageValues + SpecialDay + Month 
+                         + OperatingSystems + Browser + Region +  TrafficType + VisitorType
+                         + Weekend, data=datos_tr, method = 'class',
+                         control = rpart.control(xval = cv, minbucket = min_nod, cp = min_cp))
+    tcar_pruned = prune(tcar_todos, cp_todos)
+    tcar_pruned_table = table(predict(tcar_pruned, datos_test, t="class",), datos_test$y)
+    v_tabla[i,] = matrix(tcar_pruned_table, nrow = 1)
+  }
+  v_suma = apply(v_tabla,2,sum)
+  aciertos_cv = sum(v_suma[c(1,4)])
+  fallos_cv = sum(v_suma[c(2,3)])
+  p_aciertos_cv = (aciertos_cv/12330)*100
+  
+  tabla_comparacion$Parametro_complejidad[j] = cp_todos
+  tabla_comparacion$Eficiencia[j] = p_aciertos_cv
+  tabla_comparacion$Nodos[j] = nodos_todos_v[j]
+  
+  
+  
+}
+tabla_comparacion
+```
