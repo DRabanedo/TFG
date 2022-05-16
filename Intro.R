@@ -221,30 +221,41 @@ ggplot(tabla_comparacion) +
 
 
 ################################################################################
+library(ipred)
+set.seed(732)
+datos_reg_bagging = bagging(formula = log_price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + sqft_above + sqft_basement + yr_built + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15,
+                            nbagg = 300, data = datos_sel, coob = TRUE, control = rpart.control(minsplit = 5, cp = 0))
+paste0("La estimación del error cuadrático medio del bagging sobre el conjunto de datos es de ", round(datos_reg_bagging$err^2,6))
 
+
+################################################################################
 
 #Random forest de regresión
 semilla = 732
 
-n_trees_rf = 1000         #Numero de árboles a utilizar
-min_nod_size_rf = 1       #Queremos un árbol saturado, para reducir el sesgo
-r_forest = ranger(formula = log_price ~ .,
+n_trees_rf = 2000         #Numero de árboles a utilizar
+min_nod_size_rf = 5       #Queremos un árbol saturado, para reducir el sesgo
+r_forest = ranger(formula = log_price ~ bedrooms + bathrooms + sqft_living +
+                    sqft_lot + floors + sqft_above + sqft_basement + yr_built
+                  + sqft_living15 + waterfront + condition + view + grade + zipcode + sqft_lot15,
   data = datos_sel,      
   num.trees = n_trees_rf,
   importance = "impurity_corrected",
   min.node.size = min_nod_size_rf,
   splitrule = "variance",
   regularization.factor = 1,
+  mtry = 6,
   oob.error = TRUE,
   seed = semilla,
   dependent.variable.name = NULL)
 summary(r_forest)
-paste0("El error cuadrático medio de este bosque aleatorio de regresión  sobre el conjunto de datos es de ", round(r_forest$prediction.error,6))
+paste0("La estimación del  error cuadrático medio de este bosque aleatorio de regresión  sobre el conjunto de datos es de ", round(r_forest$prediction.error,6))
 r_forest$r.squared
-paste0("El valor de R cuadrado de este bosque aleatorio de regresión sobre el conjunto de datos es de ", round(r_forest$r.squared,6))
+paste0("La estimación del  valor de R cuadrado de este bosque aleatorio de regresión sobre el conjunto de datos es de ", round(r_forest$r.squared,6))
 
+r_forest$mtry
+################################################################################
 
-##############################################################
 #Problema de regresión lineal múltiple: COMPARATIVA
 
 datos_sel_lm = datos_sel[,c(1,2,3,4,5,6,11,12,13,15,16,17)]
@@ -289,13 +300,13 @@ sum((mult_reg_nolog$residuals)^2)
 
 
 
+################################################################################
 
 
 
 
 
-
-n_trees_rf_bucle = c(500,1000,1500) #Numero de árboles a utilizar
+n_trees_rf_bucle = c(100,500,1000,1500, 2000, 2500, 3000) #Numero de árboles a utilizar
 mtry_rf_bucle = c(round(0.5*sqrt(14)), round(sqrt(14)), round(2*sqrt(14)))
 min_nod_size_rf = 1 #Queremos un fullgrown tree, para reducir el sesgo
 tabla_comparacion2 = data.frame(Splits_por_nodo = rep(NA, length(n_trees_rf_bucle)*length(mtry_rf_bucle)), Numero_arboles = rep(NA,length(n_trees_rf_bucle)*length(mtry_rf_bucle)),
